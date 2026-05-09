@@ -454,7 +454,7 @@ class QATool:
 
         self.doc_path = os.path.join(save_dir, fname)
         try:
-            self.document = self._create_document()
+            self._create_document()
         except Exception as exc:
             messagebox.showerror("Document error",
                                  f"Could not create document:\n{exc}")
@@ -483,7 +483,7 @@ class QATool:
         except Exception:
             pass
 
-        if self.document:
+        if self.doc_path and os.path.exists(self.doc_path):
             try:
                 self._append_summary()
             except Exception:
@@ -510,7 +510,7 @@ class QATool:
 
     # ── Document ──────────────────────────────────────────────────────────────
 
-    def _create_document(self) -> Document:
+    def _create_document(self):
         doc = Document()
 
         title = doc.add_heading("Test Report", level=0)
@@ -535,12 +535,13 @@ class QATool:
         doc.add_paragraph("")
         doc.add_heading("Test Screenshots", level=1)
         doc.save(self.doc_path)
-        return doc
 
     def _append_summary(self):
+        # Reload from disk so any tester edits in Word are preserved
+        doc = Document(self.doc_path)
         end_time = datetime.now()
-        self.document.add_heading("Session Summary", level=1)
-        p = self.document.add_paragraph()
+        doc.add_heading("Session Summary", level=1)
+        p = doc.add_paragraph()
         p.add_run("Total screenshots: ").bold = True
         p.add_run(str(self.count))
         p.add_run("    ")
@@ -549,7 +550,7 @@ class QATool:
         p.add_run("    ")
         p.add_run("End: ").bold = True
         p.add_run(end_time.strftime("%Y-%m-%d %H:%M:%S"))
-        self.document.save(self.doc_path)
+        doc.save(self.doc_path)
 
     # ── Hotkey & capture ──────────────────────────────────────────────────────
 
@@ -638,22 +639,26 @@ class QATool:
             n  = self.count
             ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
+            # Reload from disk every time — preserves any reordering the tester
+            # did in Word between captures, instead of overwriting with stale RAM copy
+            doc = Document(self.doc_path)
+
             heading = f"Screenshot {n}" if opts["auto_num"] else "Screenshot"
-            self.document.add_heading(heading, level=2)
+            doc.add_heading(heading, level=2)
 
             if opts["auto_ts"]:
-                para = self.document.add_paragraph(f"Captured: {ts}")
+                para = doc.add_paragraph(f"Captured: {ts}")
                 run  = para.runs[0]
                 run.font.size      = Pt(8)
                 run.font.color.rgb = RGBColor(0x80, 0x80, 0x80)
 
             if description:
-                notes = self.document.add_paragraph(f"Notes: {description}")
+                notes = doc.add_paragraph(f"Notes: {description}")
                 notes.runs[0].bold = True
 
-            self.document.add_picture(buf, width=Inches(6.0))
-            self.document.add_paragraph("")
-            self.document.save(self.doc_path)
+            doc.add_picture(buf, width=Inches(6.0))
+            doc.add_paragraph("")
+            doc.save(self.doc_path)
 
             self.root.after(0, lambda: self._update_status(n, ts))
             self.root.after(0, self.root.deiconify)
