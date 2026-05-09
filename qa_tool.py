@@ -35,6 +35,118 @@ def app_dir() -> str:
     return os.path.dirname(os.path.abspath(__file__))
 
 
+def _icon_path() -> str:
+    if getattr(sys, "frozen", False):
+        return os.path.join(sys._MEIPASS, "icon.ico")
+    return os.path.join(app_dir(), "icon.ico")
+
+
+# ── Splash screen ─────────────────────────────────────────────────────────────
+
+class SplashScreen:
+    """
+    Full-screen-style splash that shows for 3 seconds then reveals the app.
+    Message: 'Built for Carrots.. Always be grateful to your brother, Sistaaa'
+    """
+    DURATION_MS = 3000
+
+    def __init__(self, root: tk.Tk):
+        self._root = root
+
+        dlg = tk.Toplevel(root)
+        dlg.overrideredirect(True)          # no title bar / border
+        dlg.attributes("-topmost", True)
+
+        W, H = 520, 340
+        sw = dlg.winfo_screenwidth()
+        sh = dlg.winfo_screenheight()
+        dlg.geometry(f"{W}x{H}+{(sw - W) // 2}+{(sh - H) // 2}")
+
+        BG   = "#4A154B"   # deep plum
+        ACC  = "#7C3085"   # lighter purple border
+        PINK = "#FF79C6"   # hot pink accent
+
+        # Outer border frame
+        border = tk.Frame(dlg, bg=ACC)
+        border.place(x=0, y=0, width=W, height=H)
+
+        # Inner background
+        inner = tk.Frame(border, bg=BG)
+        inner.place(x=2, y=2, width=W - 4, height=H - 4)
+
+        # Scissors emoji
+        tk.Label(inner, text="✂", font=("Segoe UI Emoji", 54),
+                 bg=BG, fg="white").pack(pady=(28, 4))
+
+        # App name
+        tk.Label(inner, text="QA Screenshot Tool",
+                 font=("Segoe UI", 13, "bold"),
+                 bg=BG, fg="#DDA0DD").pack()          # plum text
+
+        # Divider line
+        tk.Frame(inner, bg=ACC, height=1).pack(fill="x", padx=60, pady=10)
+
+        # "Built for Carrots.."
+        tk.Label(inner,
+                 text="Built for Carrots..",
+                 font=("Segoe UI", 16, "bold"),
+                 bg=BG, fg=PINK).pack(pady=(0, 4))
+
+        # Sister message
+        tk.Label(inner,
+                 text="Always be grateful to your brother, Sistaaa",
+                 font=("Segoe UI", 11, "italic"),
+                 bg=BG, fg="#F8C8F0",
+                 wraplength=420, justify="center").pack()
+
+        # Progress bar
+        tk.Frame(inner, bg=BG, height=12).pack()
+        style = ttk.Style(dlg)
+        style.configure(
+            "Splash.Horizontal.TProgressbar",
+            troughcolor="#2D0A30",
+            background=PINK,
+            bordercolor=BG,
+            lightcolor=PINK,
+            darkcolor=PINK,
+        )
+        self._bar = ttk.Progressbar(
+            inner, length=340, mode="determinate",
+            style="Splash.Horizontal.TProgressbar",
+        )
+        self._bar.pack(pady=(6, 4))
+
+        tk.Label(inner, text="Click anywhere to skip",
+                 font=("Segoe UI", 7), bg=BG, fg="#7C3085").pack()
+
+        dlg.bind("<Button-1>", lambda _: self._finish())
+        self._dlg   = dlg
+        self._steps = 0
+        self._interval = 40                         # ms per tick
+        self._total_ticks = self.DURATION_MS // self._interval
+        self._animate()
+
+    def _animate(self):
+        self._steps += 1
+        self._bar["value"] = min(100, self._steps * 100 // self._total_ticks)
+        if self._steps < self._total_ticks:
+            self._dlg.after(self._interval, self._animate)
+        else:
+            self._finish()
+
+    def _finish(self):
+        try:
+            self._dlg.destroy()
+        except Exception:
+            pass
+        try:
+            self._root.deiconify()
+        except Exception:
+            pass
+
+
+# ── Settings ──────────────────────────────────────────────────────────────────
+
 class Settings:
     _DEFAULTS = {
         "hotkey": "f1",
@@ -75,30 +187,41 @@ class Settings:
         self._data[key] = value
 
 
+# ── Main application ──────────────────────────────────────────────────────────
+
 class QATool:
     APP_TITLE = "QA Screenshot Tool"
     WIN_SIZE  = "540x500"
 
     def __init__(self):
         self.root = tk.Tk()
+        self.root.withdraw()                   # hide until splash finishes
         self.root.title(self.APP_TITLE)
         self.root.geometry(self.WIN_SIZE)
         self.root.resizable(False, False)
 
+        # Window icon (title bar + taskbar)
+        ip = _icon_path()
+        if os.path.exists(ip):
+            try:
+                self.root.iconbitmap(ip)
+            except Exception:
+                pass
+
         self.settings = Settings()
 
-        # Session state
         self.active     = False
         self.document   = None
         self.doc_path   = ""
         self.count      = 0
         self.sess_start = None
-
-        # FIX: lock prevents concurrent captures corrupting the document
-        self._lock = threading.Lock()
+        self._lock      = threading.Lock()
 
         self._build_ui()
         self._restore_settings_to_ui()
+
+        # Show splash — main window appears automatically when it finishes
+        SplashScreen(self.root)
 
     # ── UI ───────────────────────────────────────────────────────────────────
 
@@ -330,8 +453,6 @@ class QATool:
         os.makedirs(save_dir, exist_ok=True)
 
         self.doc_path = os.path.join(save_dir, fname)
-
-        # FIX: only mark session active after document is successfully created
         try:
             self.document = self._create_document()
         except Exception as exc:
@@ -379,7 +500,6 @@ class QATool:
                     "Session complete",
                     f"{self.count} screenshot(s) captured.\n\n"
                     f"Saved to:\n{self.doc_path}\n\nOpen document now?"):
-                # FIX: os.startfile wrapped — fails gracefully if Word isn't installed
                 try:
                     os.startfile(self.doc_path)
                 except Exception:
@@ -403,7 +523,6 @@ class QATool:
             cells = tbl.rows[i].cells
             cells[0].text = label
             cells[1].text = value
-            # Bold the label cell
             for para in cells[0].paragraphs:
                 for run in para.runs:
                     run.bold = True
@@ -426,9 +545,7 @@ class QATool:
         p.add_run(str(self.count))
         p.add_run("    ")
         p.add_run("Start: ").bold = True
-        start_str = (self.sess_start.strftime("%Y-%m-%d %H:%M:%S")
-                     if self.sess_start else "-")
-        p.add_run(start_str)
+        p.add_run(self.sess_start.strftime("%Y-%m-%d %H:%M:%S") if self.sess_start else "-")
         p.add_run("    ")
         p.add_run("End: ").bold = True
         p.add_run(end_time.strftime("%Y-%m-%d %H:%M:%S"))
@@ -442,11 +559,7 @@ class QATool:
         except Exception:
             pass
         try:
-            keyboard.add_hotkey(
-                self.settings["hotkey"],
-                self._on_hotkey,
-                suppress=False,
-            )
+            keyboard.add_hotkey(self.settings["hotkey"], self._on_hotkey, suppress=False)
         except Exception as exc:
             messagebox.showerror(
                 "Hotkey error",
@@ -458,8 +571,6 @@ class QATool:
     def _on_hotkey(self):
         if not self.active:
             return
-        # FIX: snapshot all option values here (keyboard thread) before spawning
-        # a worker thread — avoids reading tkinter vars from the wrong thread.
         opts = {
             "delay":       self.settings["capture_delay"],
             "minimize":    self.settings["minimize_on_capture"],
@@ -509,24 +620,20 @@ class QATool:
         entry.bind("<Return>", lambda _: capture_with_desc())
 
     def _do_capture(self, description: str, opts: dict):
-        # FIX: lock prevents two concurrent captures writing to the document at once
         if not self._lock.acquire(blocking=False):
-            return  # a capture is already in progress — skip this keypress
+            return
 
         try:
             if opts["minimize"]:
                 self.root.after(0, self.root.iconify)
 
-            # FIX: honour user delay (minimum 0.4 s so minimize animation finishes)
             time.sleep(max(0.4, opts["delay"]))
 
-            # FIX: all_screens=True captures across multiple monitors
             screenshot = ImageGrab.grab(all_screens=True)
             buf = BytesIO()
             screenshot.save(buf, format="PNG")
             buf.seek(0)
 
-            # FIX: increment count inside the lock — thread-safe
             self.count += 1
             n  = self.count
             ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")

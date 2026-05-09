@@ -3,7 +3,7 @@ name: Build Windows EXE
 on:
   push:
     branches: [ main, master ]
-  workflow_dispatch:   # allows manual trigger from GitHub UI
+  workflow_dispatch:
 
 jobs:
   build:
@@ -23,12 +23,17 @@ jobs:
           python -m pip install --upgrade pip
           pip install Pillow python-docx keyboard pyinstaller
 
+      - name: Generate icon
+        run: python generate_icon.py
+
       - name: Build portable EXE
         run: |
           pyinstaller `
             --onefile `
             --noconsole `
             --name "QA_Screenshot_Tool" `
+            --icon=icon.ico `
+            --add-data "icon.ico;." `
             --hidden-import=PIL `
             --hidden-import=PIL.ImageGrab `
             --hidden-import=keyboard `
