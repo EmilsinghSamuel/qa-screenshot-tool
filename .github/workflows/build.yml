@@ -45,8 +45,13 @@ jobs:
         run: |
           C:\Strawberry\c\bin\gcc.exe launcher\launcher.c -o dist\QAScreenshotToolPortable.exe -mwindows -luser32 -lkernel32 -O2 -s
 
+      - name: Install NSIS
+        run: choco install nsis -y
+
       - name: Build PAF installer (NSIS)
-        run: makensis installer.nsi
+        shell: cmd
+        run: |
+          makensis installer.nsi
 
       - name: Upload plain EXE
         uses: actions/upload-artifact@v4
