@@ -103,6 +103,12 @@ class HotkeyManager:
 
 
 def app_dir() -> str:
+    # When launched via QAScreenshotToolPortable.exe the launcher sets this
+    # so config.json lands in Data\settings\ (portable root) not beside the exe
+    portable = os.environ.get("PORTABLE_DATA_DIR")
+    if portable:
+        os.makedirs(portable, exist_ok=True)
+        return portable
     if getattr(sys, "frozen", False):
         return os.path.dirname(sys.executable)
     return os.path.dirname(os.path.abspath(__file__))
