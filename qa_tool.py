@@ -6,6 +6,8 @@ Portable Windows application — no admin or installation required.
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
 import threading
+import ctypes
+import ctypes.wintypes as wintypes
 import os
 import sys
 import json
@@ -18,15 +20,86 @@ try:
     from docx import Document
     from docx.shared import Inches, Pt, RGBColor
     from docx.enum.text import WD_ALIGN_PARAGRAPH
-    import keyboard
 except ImportError as exc:
     import tkinter.messagebox as _mb
     _mb.showerror(
         "Missing dependencies",
         f"Required package missing: {exc}\n\n"
-        "pip install Pillow python-docx keyboard",
+        "pip install Pillow python-docx",
     )
     sys.exit(1)
+
+
+# ── Hotkey manager (Windows RegisterHotKey API) ───────────────────────────────
+# Uses the official Windows hotkey API instead of a keyboard hook library.
+# RegisterHotKey does NOT install a system-wide hook, so antivirus software
+# has no reason to flag it — it's the same mechanism Word, Snipping Tool, etc. use.
+
+class HotkeyManager:
+    WM_HOTKEY = 0x0312
+    WM_QUIT   = 0x0012
+    _ID       = 1
+
+    _VK = {
+        'f1': 0x70, 'f2': 0x71, 'f3': 0x72,  'f4': 0x73,
+        'f5': 0x74, 'f6': 0x75, 'f7': 0x76,  'f8': 0x77,
+        'f9': 0x78, 'f10':0x79, 'f11':0x7A,  'f12':0x7B,
+        'print screen': 0x2C, 'snapshot': 0x2C,
+    }
+    _MOD = {'ctrl': 0x0002, 'shift': 0x0004, 'alt': 0x0001}
+
+    def __init__(self):
+        self._u32      = ctypes.windll.user32
+        self._k32      = ctypes.windll.kernel32
+        self._callback = None
+        self._thread   = None
+        self._win_tid  = None
+        self._stop     = threading.Event()
+
+    def _parse(self, hotkey: str):
+        parts = [p.strip().lower() for p in hotkey.split('+')]
+        key   = parts[-1]
+        mod_v = 0
+        for m in parts[:-1]:
+            mod_v |= self._MOD.get(m, 0)
+        vk = self._VK.get(key)
+        if vk is None and len(key) == 1:
+            vk = ord(key.upper())
+        return mod_v, vk or 0
+
+    def register(self, hotkey: str, callback):
+        self.unregister()
+        self._stop.clear()
+        self._callback = callback
+        mod_v, vk = self._parse(hotkey)
+        self._thread = threading.Thread(
+            target=self._loop, args=(mod_v, vk), daemon=True, name="hotkey")
+        self._thread.start()
+
+    def unregister(self):
+        if self._thread and self._thread.is_alive():
+            self._stop.set()
+            if self._win_tid:
+                self._u32.PostThreadMessageW(self._win_tid, self.WM_QUIT, 0, 0)
+            self._thread.join(timeout=2)
+        self._thread   = None
+        self._callback = None
+        self._win_tid  = None
+
+    def _loop(self, mod_v: int, vk: int):
+        self._win_tid = self._k32.GetCurrentThreadId()
+        if not self._u32.RegisterHotKey(None, self._ID, mod_v, vk):
+            return
+        msg = wintypes.MSG()
+        while not self._stop.is_set():
+            ret = self._u32.GetMessageW(ctypes.byref(msg), None, 0, 0)
+            if ret <= 0:
+                break
+            if msg.message == self.WM_HOTKEY and msg.wParam == self._ID:
+                cb = self._callback
+                if cb:
+                    cb()
+        self._u32.UnregisterHotKey(None, self._ID)
 
 
 def app_dir() -> str:
@@ -216,6 +289,7 @@ class QATool:
         self.count      = 0
         self.sess_start = None
         self._lock      = threading.Lock()
+        self._hotkey    = HotkeyManager()
 
         self._build_ui()
         self._restore_settings_to_ui()
@@ -478,10 +552,7 @@ class QATool:
             return
         self.active = False
 
-        try:
-            keyboard.unhook_all()
-        except Exception:
-            pass
+        self._hotkey.unregister()
 
         if self.doc_path and os.path.exists(self.doc_path):
             try:
@@ -556,11 +627,7 @@ class QATool:
 
     def _register_hotkey(self):
         try:
-            keyboard.unhook_all()
-        except Exception:
-            pass
-        try:
-            keyboard.add_hotkey(self.settings["hotkey"], self._on_hotkey, suppress=False)
+            self._hotkey.register(self.settings["hotkey"], self._on_hotkey)
         except Exception as exc:
             messagebox.showerror(
                 "Hotkey error",
@@ -682,10 +749,7 @@ class QATool:
                     "Quit", "A session is active. Stop and save before quitting?"):
                 return
             self.stop_session()
-        try:
-            keyboard.unhook_all()
-        except Exception:
-            pass
+        self._hotkey.unregister()
         self.root.destroy()
 
     def run(self):
