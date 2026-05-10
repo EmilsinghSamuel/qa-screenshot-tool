@@ -41,11 +41,9 @@ jobs:
             qa_tool.py
 
       - name: Compile PortableApps launcher (GCC)
+        shell: cmd
         run: |
-          C:\msys64\mingw64\bin\gcc.exe launcher\launcher.c `
-            -o dist\QAScreenshotToolPortable.exe `
-            -mwindows -luser32 -lkernel32 `
-            -O2 -s
+          C:\msys64\mingw64\bin\gcc.exe launcher\launcher.c -o dist\QAScreenshotToolPortable.exe -mwindows -luser32 -lkernel32 -O2 -s
 
       - name: Build PAF installer (NSIS)
         run: makensis installer.nsi
